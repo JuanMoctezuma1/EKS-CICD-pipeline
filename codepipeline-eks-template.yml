@@ -1,0 +1,100 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation Template para un AWS CodePipeline con codebuild y Bitbucket repo como fuente.
+
+Parameters:
+  RepositoryName:
+    Type: String
+    Description: Name of the repository where we have our code and will be used as source
+  BranchName:
+    Type: String
+    Description: Nombre de la rama en el repositorio.
+    Default: main   
+  CodePipelineServiceRole:
+    Type: String
+    Description: ARN of the CodePipeline Service Role
+  CodebuildServiceRole:
+    Type: String
+    Description: ARN of the CodeBuild Service Role
+  REPOSITORYURI:
+    Type: String
+    Description: URI of the ECR Repo where the images will be pushed
+  EKSKUBECTLROLEARN:
+    Type: String
+    Description: ARN of the role that is used for interacting with our EKS Cluster    
+  EKSCLUSTERNAME:
+    Type: String
+    Description: Name of the cluster we will use in this DevOps Pipeline  
+
+Resources:
+########CI/CD configuration########
+
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: EKS-DevOps-Pipeline
+      RoleArn: !Ref CodePipelineServiceRole
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeCommit
+                Version: '1'
+              Configuration:
+                RepositoryName: !Ref RepositoryName
+                BranchName: !Ref BranchName
+              OutputArtifacts:
+                - Name: SourceCode
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: BuildAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref Codebuild
+              InputArtifacts:
+                - Name: SourceCode
+              OutputArtifacts:
+                - Name: BuildArtifact
+              RunOrder: 1
+      ArtifactStore:
+        Type: S3
+        Location: codepipeline-us-west-2-928932614767
+
+  Codebuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: EKS-DevOps-CodeBuild
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec.yml
+      Environment:
+        EnvironmentVariables:
+          - Name: REPOSITORY_URI
+            Type: PLAINTEXT
+            Value: !Ref REPOSITORYURI
+          - Name: EKS_KUBECTL_ROLE_ARN
+            Type: PLAINTEXT
+            Value: !Ref EKSKUBECTLROLEARN
+          - Name: EKS_CLUSTER_NAME
+            Type: PLAINTEXT
+            Value: !Ref EKSCLUSTERNAME            
+        PrivilegedMode: True
+        Type: LINUX_CONTAINER
+        ImagePullCredentialsType: CODEBUILD
+        Image: aws/codebuild/standard:7.0
+        ComputeType: BUILD_GENERAL1_SMALL
+      ServiceRole: !Ref CodebuildServiceRole
+      Artifacts:
+        Type: CODEPIPELINE
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: EKS-DevOps-CloudWatchLogs-BuildLogGroup-Name
